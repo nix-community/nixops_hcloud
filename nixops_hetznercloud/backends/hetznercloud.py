@@ -10,15 +10,16 @@ from hcloud.ssh_keys.domain import SSHKey
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
 from nixops.resources import ResourceOptions
 from nixops.util import attr_property
+from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
+                                             get_access_token)
 
 
-class HetznerCloudVmOptions(ResourceOptions):
+class HetznerCloudVmOptions(HetznerCloudContextOptions):
     image: Optional[int]
     # TODO validate image_selector
     image_selector: str
     location: str
     serverType: str
-    token: Optional[str]
 
 
 class HetznerCloudOptions(MachineOptions):
@@ -47,9 +48,6 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     location = attr_property("hetznercloud.location", None, str)
     server_type = attr_property("hetznercloud.server_type", None, str)
 
-    def __init__(self, depl, name, id):
-        super().__init__(depl, name, id)
-
     @property
     def resource_id(self):
         return self.vm_id
@@ -65,16 +63,9 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
 
         self.set_common_state(defn)
 
-        if defn.config.hetznercloud.token is None:
-            token = os.environ["HCLOUD_TOKEN"]
-        else:
-            token = defn.config.hetznercloud.token
-        if token is None:
-            raise Exception("No token configured and HCLOUD_TOKEN not set")
-        self.token = token
-
-        client = self._client()
         hetzner = defn.config.hetznercloud
+        self.token = get_access_token(hetzner)
+        client = self._client()
         image_id = self._fetch_image_id(hetzner.image, hetzner.image_selector)
         if self.image_id is None:
             self.image_id = image_id
@@ -102,14 +93,11 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             response = client.servers.create(
                 name=self.name,
                 # TODO manage SSH keys correcly
-                keys=SSHKey(name="admin"),
+                ssh_keys=[SSHKey(name="admin")],
                 server_type=ServerType(self.server_type),
                 image=Image(id=self.image_id),
                 # Set labels so we can find the instance if nixops crashes before writing vm_id
-                labels={
-                    "nixops_hetznercloud/name": self.name,
-                    "nixops_hetznercloud/deployment": self.depl.uuid,
-                },
+                labels={"nixops/name": self.name, "nixops/deployment": self.depl.uuid,},
             )
             with self.depl._db:
                 self.vm_id = response.server.id
@@ -156,6 +144,6 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             )
             if len(matches) == 0:
                 raise Exception(f"No images found matching {image_selector}")
-            return matches[0].image.id
+            return matches[0].id
         else:
             return image

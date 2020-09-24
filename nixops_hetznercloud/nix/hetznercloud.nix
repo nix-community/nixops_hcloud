@@ -5,8 +5,11 @@ with lib;
   ###### interface
 
   options.deployment.hetznercloud = {
+    inherit (import ./context.nix { inherit lib; }) token context;
+
     image = mkOption {
       type = types.nullOr types.int;
+      default = null;
       description = ''
         Image ID to use for this VM. It's expected to be a NixOs system with SSH access to root.
         Takes precedence over <option>deployment.hetznercloud.image_selector</option>.
@@ -15,7 +18,7 @@ with lib;
 
     image_selector = mkOption {
       type = types.str;
-      default = "nixops_hetznercloud";
+      default = "nixops";
       description = ''
         <link xlink:href='https://docs.hetzner.cloud/#label-selector'>Label selector</link> for the
         server image. If multiple images are found, the most recent one will be used.
@@ -36,17 +39,6 @@ with lib;
       example = "cx11";
       description = ''
         Hetzner Cloud server type name.
-      '';
-    };
-
-    token = mkOption {
-      default = null;
-      type = types.nullOr types.str;
-      description = ''
-        Hetzner Cloud API token.
-
-        If left empty, the value of the environment variable
-        <envar>HCLOUD_TOKEN</envar> is used instead.
       '';
     };
   };

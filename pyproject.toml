@@ -9,12 +9,14 @@ license = "MIT"
 hcloud = "^1.9.1"
 python = "~3.8"
 nixops = {git = "https://github.com/NixOS/nixops.git"}
+toml = "^0.10.1"
 
 [tool.poetry.dev-dependencies]
 mypy = "^0.770"
 black = "^19.10b0"
 pylint = "^2.6.0"
 isort = "^5.5.3"
+pytest = "^6.0.2"
 
 [tool.poetry.plugins."nixops"]
 hetznercloud = "nixops_hetznercloud.plugin"
