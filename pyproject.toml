@@ -6,7 +6,8 @@ authors = ["Rodrigo Gryzinski <rogryza@rogryza.com>"]
 license = "MIT"
 
 [tool.poetry.dependencies]
-hcloud = "^1.9.1"
+# hcloud = "^1.9.1"
+hcloud = {path = "../hcloud-python"}
 python = "~3.8"
 nixops = {git = "https://github.com/NixOS/nixops.git"}
 toml = "^0.10.1"

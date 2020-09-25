@@ -1,10 +1,11 @@
 import os
 import os.path
-from typing import Optional
+from typing import Iterable, Optional, Tuple
 
 import hcloud
 from hcloud.images.domain import Image
 from hcloud.server_types.domain import ServerType
+from hcloud.servers.client import BoundServer
 from hcloud.servers.domain import Server
 from hcloud.ssh_keys.domain import SSHKey
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
@@ -58,13 +59,13 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
 
     def create(self, defn: HetznerCloudDefinition, check, allow_reboot, allow_recreate):
         assert isinstance(defn, HetznerCloudDefinition)
-        if self.state not in (self.RESCUE, self.UP) or check:
+        hetzner = defn.config.hetznercloud
+        self.token = get_access_token(hetzner)
+        if self.state not in (MachineState.RESCUE, MachineState.UP) or check:
             self.check()
 
         self.set_common_state(defn)
 
-        hetzner = defn.config.hetznercloud
-        self.token = get_access_token(hetzner)
         client = self._client()
         image_id = self._fetch_image_id(hetzner.image, hetzner.image_selector)
         if self.image_id is None:
@@ -97,11 +98,12 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 server_type=ServerType(self.server_type),
                 image=Image(id=self.image_id),
                 # Set labels so we can find the instance if nixops crashes before writing vm_id
-                labels={"nixops/name": self.name, "nixops/deployment": self.depl.uuid,},
+                labels=dict(self._server_labels()),
             )
             with self.depl._db:
                 self.vm_id = response.server.id
                 self.public_ipv4 = response.server.public_net.ipv4.ip
+                # TODO get state from creation response
                 self.state = self.STARTING
 
     def destroy(self, wipe=False):
@@ -128,12 +130,53 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     def _check(self, res):
         # TODO better state checking
         if self.vm_id is None:
-            res.exists = False
-            return
+            self.log("Looking up server by labels...")
+            label_selector = ",".join(f"{k}={v}" for k, v in self._server_labels())
+            servers, _ = self._client().servers.get_list(label_selector=label_selector,)
+            if len(servers) > 1:
+                self.warn(f"Multiple servers matching {self.name} by labels")
+            if len(servers) == 0:
+                res.exists = False
+                return
+            server: BoundServer = servers[0]
+            self.vm_id = server.id
+        else:
+            try:
+                server = self._client().server.get_by_id(self.vm_id).server
+            except hcloud.APIException as e:
+                if e.code == 404:
+                    self._reset()
+                    res.exists = False
+                    return
+                raise
         res.exists = True
-        res.is_up = self.ping()
+        with self._depl.db:
+            self.state = self._hcloud_status_to_machine_status(server.status)
+            self.image_id = server.image.id
+            self.location = server.datacenter.location.name
+            self.public_ipv4 = server.public_net.ipv4.ip
+            self.server_type = server.server_type.name
+        res.is_up = self.state == MachineState.UP
         if res.is_up:
             super()._check(res)
+
+    @staticmethod
+    def _hcloud_status_to_machine_status(status: str) -> int:
+        # TODO check for rescue and unreachable
+        try:
+            return {
+                Server.STATUS_OFF: MachineState.STOPPED,
+                Server.STATUS_STOPPING: MachineState.STOPPING,
+                Server.STATUS_STARTING: MachineState.STARTING,
+                Server.STATUS_INIT: MachineState.STARTING,
+                Server.STATUS_RUNNING: MachineState.UP,
+                Server.STATUS_UNKNOWN: MachineState.UNKNOWN,
+                Server.STATUS_DELETING: MachineState.STOPPING,
+                Server.STATUS_MIGRATING: MachineState.STARTING,
+                Server.STATUS_REBUILDING: MachineState.STARTING,
+            }[status]
+        except KeyError as e:
+            raise Exception(f"Invalid server status {status!r}") from e
 
     def _fetch_image_id(self, image: Optional[int], image_selector: str) -> int:
         client = self._client()
@@ -147,3 +190,18 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             return matches[0].id
         else:
             return image
+
+    def _server_labels(self) -> Iterable[Tuple[str, str]]:
+        assert self.depl
+        yield "nixops/name", self.name
+        yield "nixops/deployment", self.depl.uuid
+
+    def _reset(self) -> None:
+        assert self.depl
+        with self.depl._db:
+            self.state = self.MISSING
+            self.vm_id = None
+            self.image_id = None
+            self.location = None
+            self.public_ipv4 = None
+            self.server_type = None
