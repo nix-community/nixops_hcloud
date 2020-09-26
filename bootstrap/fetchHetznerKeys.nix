@@ -19,7 +19,7 @@ in
   };
 
   config = {
-    systemd.services = lib.attrsets.optionalAttrs config.fetchHetznerKeys.enable {
+    systemd.services = lib.attrsets.optionalAttrs config.services.fetchHetznerKeys.enable {
       fetch-hetzner-keys = {
         description = "Fetches SSH keys from hetzner instance metadata.";
         wantedBy = [ "multi-user.target" ];
