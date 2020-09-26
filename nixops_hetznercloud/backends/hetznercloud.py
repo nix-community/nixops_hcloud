@@ -138,6 +138,11 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         return super().get_ssh_flags(*args, **kwargs) + [
             "-o",
             "StrictHostKeyChecking=accept-new",
+            # TODO these are for testing
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "StrictHostKeyChecking=accept-new",
         ]
 
     def get_ssh_name(self):
@@ -146,15 +151,13 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
 
     def get_physical_spec(self):
         # TODO manage SSH keys
+        spec = super().get_physical_spec()
         with open("id_rsa.pub") as f:
             pubkey = f.read()
-        return {
-            "config": {
-                ("users", "users", "root", "openssh", "authorizedKeys", "keys"): [
-                    pubkey
-                ],
-            },
+        spec["config"] = {
+            ("users", "users", "root", "openssh", "authorizedKeys", "keys"): [pubkey],
         }
+        return spec
 
     def _check(self, res):
         if self.vm_id is None:
