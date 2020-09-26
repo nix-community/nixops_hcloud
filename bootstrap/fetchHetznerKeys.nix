@@ -18,15 +18,17 @@ in
     fetchHetznerKeys.enable = mkEnableOption "fetch-hetzner-keys";
   };
 
-  config = lib.attrsets.optionalAttrs config.fetchHetznerKeys.enable {
-    systemd.services.fetch-hetzner-keys = {
-      description = "Fetches SSH keys from hetzner instance metadata.";
-      wantedBy = [ "multi-user.target" ];
+  config = {
+    systemd.services = lib.attrsets.optionalAttrs config.fetchHetznerKeys.enable {
+      fetch-hetzner-keys = {
+        description = "Fetches SSH keys from hetzner instance metadata.";
+        wantedBy = [ "multi-user.target" ];
 
-      serviceConfig = {
-        type = "oneshot";
-        user = "root";
-        ExecStart = script;
+        serviceConfig = {
+          type = "oneshot";
+          user = "root";
+          ExecStart = script;
+        };
       };
     };
   };
