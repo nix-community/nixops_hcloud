@@ -15,7 +15,7 @@ let script = pkgs.writeShellScript "fetch-hetzner-keys.sh"
 in
 {
   options = with lib; {
-    fetchHetznerKeys.enable = mkEnableOption "fetch-hetzner-keys";
+    services.fetchHetznerKeys.enable = mkEnableOption "fetch-hetzner-keys";
   };
 
   config = {
@@ -23,11 +23,20 @@ in
       fetch-hetzner-keys = {
         description = "Fetches SSH keys from hetzner instance metadata.";
         wantedBy = [ "multi-user.target" ];
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+
+        unitConfig = {
+          startLimitInterval = 200;
+          startLimitBurst = 5;
+        };
 
         serviceConfig = {
           type = "oneshot";
           user = "root";
           ExecStart = script;
+          Restart = "on-failure";
+          RestartSec = 30;
         };
       };
     };

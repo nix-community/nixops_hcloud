@@ -14,5 +14,5 @@
 
   services.openssh.permitRootLogin = "prohibit-password";
   services.openssh.enable = true;
-  fetchHetznerKeys.enable = true;
+  services.fetchHetznerKeys.enable = true;
 }
