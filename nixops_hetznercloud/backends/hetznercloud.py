@@ -1,6 +1,6 @@
 import os
 import os.path
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Optional, Tuple, cast
 
 import hcloud
 from hcloud.images.domain import Image
@@ -9,6 +9,7 @@ from hcloud.servers.client import BoundServer
 from hcloud.servers.domain import Server
 from hcloud.ssh_keys.domain import SSHKey
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
+from nixops.nix_expr import RawValue
 from nixops.resources import ResourceOptions
 from nixops.util import attr_property
 from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
@@ -38,6 +39,11 @@ class HetznerCloudDefinition(MachineDefinition):
 class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     definition_type = HetznerCloudDefinition
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._cached_client: Optional[hcloud.Client] = None
+        self._cached_server: Optional[BoundServer] = None
+
     @classmethod
     def get_type(cls) -> str:
         return "hetznercloud"
@@ -53,9 +59,20 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     def resource_id(self):
         return self.vm_id
 
+    @property
     def _client(self) -> hcloud.Client:
         assert self.token
-        return hcloud.Client(self.token)
+        if self._cached_client is None:
+            self._cached_client = hcloud.Client(self.token)
+        return self._cached_client
+
+    @property
+    def _server(self) -> BoundServer:
+        if self.vm_id is None:
+            raise Exception("Server not created yet")
+        if self._cached_server is None or self._cached_server.id != self.vm_id:
+            self._cached_server = self._client.servers.get_by_id(self.vm_id)
+        return cast(BoundServer, self._cached_server)
 
     def create(self, defn: HetznerCloudDefinition, check, allow_reboot, allow_recreate):
         assert isinstance(defn, HetznerCloudDefinition)
@@ -66,7 +83,6 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
 
         self.set_common_state(defn)
 
-        client = self._client()
         image_id = self._fetch_image_id(hetzner.image, hetzner.image_selector)
         if self.image_id is None:
             self.image_id = image_id
@@ -80,18 +96,20 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self.warn(
                 f"location changed from {self.location} to {hetzner.location} but can't update location of a VM."
             )
-        if hetzner.serverType != self.server_type:
-            # TODO update server type
-            pass
+        if self.vm_id is not None and hetzner.serverType != self.server_type:
+            # TODO configure upgrade_disk
+            self._server.change_type(
+                ServerType(name=self.server_type), upgrade_disk=True
+            ).wait_until_finished()
         self.server_type = hetzner.serverType
 
         if not self.vm_id:
             self.log(
                 "Creating Hetzner Cloud VM ("
-                + f"image '{hetzner.image}', type '{hetzner.serverType}', location '{hetzner.location}'"
+                + f"image '{image_id}', type '{hetzner.serverType}', location '{hetzner.location}'"
                 + ")..."
             )
-            response = client.servers.create(
+            response = self._client.servers.create(
                 name=self.name,
                 # TODO manage SSH keys correcly
                 ssh_keys=[SSHKey(name="admin")],
@@ -112,8 +130,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         if wipe:
             self.warn("Wipe is not supported")
         self.log("destroying Hetzner Cloud VM...")
-        client = self._client()
-        client.servers.delete(Server(id=self.vm_id))
+        self._client.servers.delete(Server(id=self.vm_id))
         return True
 
     def get_ssh_flags(self, *args, **kwargs):
@@ -127,12 +144,23 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         assert self.public_ipv4
         return self.public_ipv4
 
+    def get_physical_spec(self):
+        # TODO manage SSH keys
+        with open("id_rsa.pub") as f:
+            pubkey = f.read()
+        return {
+            "config": {
+                ("users", "users", "root", "openssh", "authorizedKeys", "keys"): [
+                    pubkey
+                ],
+            },
+        }
+
     def _check(self, res):
-        # TODO better state checking
         if self.vm_id is None:
             self.log("Looking up server by labels...")
             label_selector = ",".join(f"{k}={v}" for k, v in self._server_labels())
-            servers, _ = self._client().servers.get_list(label_selector=label_selector,)
+            servers, _ = self._client.servers.get_list(label_selector=label_selector,)
             if len(servers) > 1:
                 self.warn(f"Multiple servers matching {self.name} by labels")
             if len(servers) == 0:
@@ -142,7 +170,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self.vm_id = server.id
         else:
             try:
-                server = self._client().server.get_by_id(self.vm_id).server
+                server = self._client.servers.get_by_id(self.vm_id)
             except hcloud.APIException as e:
                 if e.code == 404:
                     self._reset()
@@ -150,7 +178,8 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                     return
                 raise
         res.exists = True
-        with self._depl.db:
+        self._cached_server = server
+        with self.depl._db:
             self.state = self._hcloud_status_to_machine_status(server.status)
             self.image_id = server.image.id
             self.location = server.datacenter.location.name
@@ -179,10 +208,9 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             raise Exception(f"Invalid server status {status!r}") from e
 
     def _fetch_image_id(self, image: Optional[int], image_selector: str) -> int:
-        client = self._client()
         if image is None:
             self.log(f"Finding image matching {image_selector}...")
-            matches, _ = client.images.get_list(
+            matches, _ = self._client.images.get_list(
                 label_selector=image_selector, sort="created:desc",
             )
             if len(matches) == 0:
