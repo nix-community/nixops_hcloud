@@ -129,8 +129,13 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             return True
         if wipe:
             self.warn("Wipe is not supported")
-        self.log("destroying Hetzner Cloud VM...")
+        if not self.depl.logger.confirm(
+            f"are you sure you want to destroy Hetzner server {self.name}?"
+        ):
+            return False
+        self.log_start("destroying Hetzner Cloud VM...")
         self._client.servers.delete(Server(id=self.vm_id))
+        self.log_end("")
         return True
 
     def get_ssh_flags(self, *args, **kwargs):
@@ -175,7 +180,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             try:
                 server = self._client.servers.get_by_id(self.vm_id)
             except hcloud.APIException as e:
-                if e.code == 404:
+                if e.code == "not_found":
                     self._reset()
                     res.exists = False
                     return
