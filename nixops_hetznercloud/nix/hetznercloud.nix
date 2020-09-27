@@ -11,7 +11,7 @@ with lib;
       type = types.nullOr types.int;
       default = null;
       description = ''
-        Image ID to use for this VM. It's expected to be a NixOs system with SSH access to root.
+        Image ID to use for this VM. It's expected to be a NixOs system with fetchHetznerKeys enabled.
         Takes precedence over <option>deployment.hetznercloud.image_selector</option>.
       '';
     };
@@ -22,7 +22,7 @@ with lib;
       description = ''
         <link xlink:href='https://docs.hetzner.cloud/#label-selector'>Label selector</link> for the
         server image. If multiple images are found, the most recent one will be used.
-        The image is expected to be a NixOs system with SSH access to root.
+        The image is expected to be a NixOs system with fetchHetznerKeys enabled.
       '';
     };
 

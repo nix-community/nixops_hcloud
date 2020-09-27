@@ -11,6 +11,7 @@ hcloud = {path = "../hcloud-python"}
 python = "~3.8"
 nixops = {git = "https://github.com/NixOS/nixops.git"}
 toml = "^0.10.1"
+pyyaml = "^5.3.1"
 
 [tool.poetry.dev-dependencies]
 mypy = "^0.770"

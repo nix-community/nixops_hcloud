@@ -1,8 +1,9 @@
 import os
 import os.path
-from typing import Iterable, Optional, Tuple, cast
+from typing import Iterable, List, Optional, Tuple, cast
 
 import hcloud
+import yaml
 from hcloud.images.domain import Image
 from hcloud.server_types.domain import ServerType
 from hcloud.servers.client import BoundServer
@@ -11,7 +12,7 @@ from hcloud.ssh_keys.domain import SSHKey
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
 from nixops.nix_expr import RawValue, nix2py
 from nixops.resources import ResourceOptions
-from nixops.util import attr_property
+from nixops.util import attr_property, create_key_pair
 from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
                                              get_access_token)
 
@@ -57,6 +58,8 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     server_type = attr_property("hetznercloud.serverType", None, str)
     upgrade_disk = attr_property("hetznercloud.upgradeDisk", False, bool)
     hw_info = attr_property("hetznercloud.hardwareInfo", None, str)
+    _ssh_private_key = attr_property("hetznercloud.sshPrivateKey", None, str)
+    _ssh_public_key = attr_property("hetznercloud.sshPublicKey", None, str)
 
     @property
     def resource_id(self):
@@ -121,6 +124,12 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 self.log_end("")
         self.server_type = hetzner.serverType
 
+        has_priv = self._ssh_private_key is not None
+        has_pub = self._ssh_public_key is not None
+        assert has_priv == has_pub
+        if not has_priv:
+            self.log("Generating SSH keypair...")
+            (self._ssh_private_key, self._ssh_public_key) = create_key_pair()
         if not self.vm_id:
             self.log_start(
                 "Creating Hetzner Cloud VM ("
@@ -135,10 +144,13 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 image=Image(id=self.image_id),
                 # Set labels so we can find the instance if nixops crashes before writing vm_id
                 labels=dict(self._server_labels()),
+                user_data=None
+                if self._ssh_public_key is None
+                else yaml.dump({"public-keys": [self._ssh_public_key]}),
             )
             self.log_end("")
             self.public_ipv4 = response.server.public_net.ipv4.ip
-            self.log_start("waiting for SSH to become available...")
+            self.log_start("waiting for SSH...")
             self.wait_for_up()
             self.log_end("")
             with self.depl._db:
@@ -161,9 +173,13 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         self.log_end("")
         return True
 
-    def get_ssh_flags(self, *args, **kwargs):
-        # TODO manage known hosts and ssh keys
+    def get_ssh_flags(self, *args, **kwargs) -> List[str]:
+        # TODO manage known hosts
+        key_file = self.get_ssh_private_key_file()
+        assert key_file is not None
         return super().get_ssh_flags(*args, **kwargs) + [
+            "-i",
+            key_file,
             "-o",
             "StrictHostKeyChecking=accept-new",
             # TODO these are for testing
@@ -173,18 +189,19 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             "StrictHostKeyChecking=accept-new",
         ]
 
+    def get_ssh_private_key_file(self) -> Optional[str]:
+        if self._ssh_private_key_file:
+            return self._ssh_private_key_file
+        if self._ssh_private_key:
+            return self.write_ssh_private_key(self._ssh_private_key)
+        return None
+
     def get_ssh_name(self):
         assert self.public_ipv4
         return self.public_ipv4
 
     def get_physical_spec(self):
-        # TODO manage SSH keys
         spec = super().get_physical_spec()
-        with open("id_rsa.pub") as f:
-            pubkey = f.read()
-        spec["config"] = {
-            ("users", "users", "root", "openssh", "authorizedKeys", "keys"): [pubkey],
-        }
         if self.hw_info:
             spec.setdefault("imports", []).append(nix2py(self.hw_info))
         return spec
@@ -192,7 +209,6 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     def _check(self, res):
         self.log_start("Looking up server...")
         if self.vm_id is None:
-            self.log_start("Looking up server by labels...")
             label_selector = ",".join(f"{k}={v}" for k, v in self._server_labels())
             servers, _ = self._client.servers.get_list(label_selector=label_selector,)
             if len(servers) > 1:
