@@ -9,7 +9,7 @@ from hcloud.servers.client import BoundServer
 from hcloud.servers.domain import Server
 from hcloud.ssh_keys.domain import SSHKey
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
-from nixops.nix_expr import RawValue
+from nixops.nix_expr import RawValue, nix2py
 from nixops.resources import ResourceOptions
 from nixops.util import attr_property
 from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
@@ -22,6 +22,7 @@ class HetznerCloudVmOptions(HetznerCloudContextOptions):
     image_selector: str
     location: str
     serverType: str
+    upgradeDisk: bool
 
 
 class HetznerCloudOptions(MachineOptions):
@@ -51,9 +52,11 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     state = attr_property("state", MachineState.MISSING, int)  # override
     public_ipv4 = attr_property("publicIpv4", None, str)
     token = attr_property("hetznercloud.token", None, str)
-    image_id = attr_property("hetznercloud.image_id", None, int)
+    image_id = attr_property("hetznercloud.image", None, int)
     location = attr_property("hetznercloud.location", None, str)
-    server_type = attr_property("hetznercloud.server_type", None, str)
+    server_type = attr_property("hetznercloud.serverType", None, str)
+    upgrade_disk = attr_property("hetznercloud.upgradeDisk", False, bool)
+    hw_info = attr_property("hetznercloud.hardwareInfo", None, str)
 
     @property
     def resource_id(self):
@@ -82,7 +85,9 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self.check()
 
         self.set_common_state(defn)
+        self.upgrade_disk = hetzner.upgradeDisk
 
+        # TODO maybe bootstrap can be automated with vncdotool
         image_id = self._fetch_image_id(hetzner.image, hetzner.image_selector)
         if self.image_id is None:
             self.image_id = image_id
@@ -97,14 +102,27 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 f"location changed from {self.location} to {hetzner.location} but can't update location of a VM."
             )
         if self.vm_id is not None and hetzner.serverType != self.server_type:
-            # TODO configure upgrade_disk
-            self._server.change_type(
-                ServerType(name=self.server_type), upgrade_disk=True
-            ).wait_until_finished()
+            # TODO Check if server can be upgraded before hitting the Hetzner API
+            # https://docs.hetzner.cloud/#server-actions-change-the-type-of-a-server
+            do_upgrade = True
+            # Only confirm if upgrade_disk is True because then the upgrade can't be undone
+            if self.upgrade_disk:
+                do_upgrade = self.depl.logger.confirm(
+                    f"are you sure you want to change Hetzner server {self.name} type from "
+                    + f"{self.server_type} to {hetzner.serverType}?"
+                )
+            if do_upgrade:
+                self.log_start("Changing Hetzner server type...")
+                self._server.shutdown().wait_until_finished()
+                self._server.change_type(
+                    ServerType(name=hetzner.serverType), upgrade_disk=self.upgrade_disk
+                ).wait_until_finished()
+                self._server.power_on().wait_until_finished()
+                self.log_end("")
         self.server_type = hetzner.serverType
 
         if not self.vm_id:
-            self.log(
+            self.log_start(
                 "Creating Hetzner Cloud VM ("
                 + f"image '{image_id}', type '{hetzner.serverType}', location '{hetzner.location}'"
                 + ")..."
@@ -118,11 +136,16 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 # Set labels so we can find the instance if nixops crashes before writing vm_id
                 labels=dict(self._server_labels()),
             )
+            self.log_end("")
+            self.public_ipv4 = response.server.public_net.ipv4.ip
+            self.log_start("waiting for SSH to become available...")
+            self.wait_for_up()
+            self.log_end("")
             with self.depl._db:
                 self.vm_id = response.server.id
-                self.public_ipv4 = response.server.public_net.ipv4.ip
                 # TODO get state from creation response
-                self.state = self.STARTING
+                self.state = MachineState.STARTING
+                self._detect_hardware()
 
     def destroy(self, wipe=False):
         if self.vm_id is None:
@@ -162,16 +185,20 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         spec["config"] = {
             ("users", "users", "root", "openssh", "authorizedKeys", "keys"): [pubkey],
         }
+        if self.hw_info:
+            spec.setdefault("imports", []).append(nix2py(self.hw_info))
         return spec
 
     def _check(self, res):
+        self.log_start("Looking up server...")
         if self.vm_id is None:
-            self.log("Looking up server by labels...")
+            self.log_start("Looking up server by labels...")
             label_selector = ",".join(f"{k}={v}" for k, v in self._server_labels())
             servers, _ = self._client.servers.get_list(label_selector=label_selector,)
             if len(servers) > 1:
                 self.warn(f"Multiple servers matching {self.name} by labels")
             if len(servers) == 0:
+                self.log_end("not found")
                 res.exists = False
                 return
             server: BoundServer = servers[0]
@@ -181,10 +208,12 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 server = self._client.servers.get_by_id(self.vm_id)
             except hcloud.APIException as e:
                 if e.code == "not_found":
+                    self.log_end("not found")
                     self._reset()
                     res.exists = False
                     return
                 raise
+        self.log_end(f"found")
         res.exists = True
         self._cached_server = server
         with self.depl._db:
@@ -196,6 +225,19 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         res.is_up = self.state == MachineState.UP
         if res.is_up:
             super()._check(res)
+
+    def _detect_hardware(self) -> None:
+        self.log_start("detecting hardware...")
+        cmd = "nixos-generate-config --show-hardware-config"
+        hardware = self.run_command(cmd, capture_stdout=True)
+        self.hw_info = "\n".join(
+            [
+                line
+                for line in hardware.splitlines()
+                if not line.lstrip().startswith("#")
+            ]
+        )
+        self.log_end("")
 
     @staticmethod
     def _hcloud_status_to_machine_status(status: str) -> int:
@@ -241,3 +283,4 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self.location = None
             self.public_ipv4 = None
             self.server_type = None
+            self.hw_info = None

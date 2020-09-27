@@ -57,16 +57,10 @@ with lib;
   config = mkIf (config.deployment.targetEnv == "hetznercloud") {
     nixpkgs.system = mkOverride 900 "x86_64-linux";
 
-    boot.initrd.availableKernelModules = [ "ata_piix" "virtio_pci" "xhci_pci" "sd_mod" "sr_mod" ];
-    boot.initrd.kernelModules = [ ];
-    boot.kernelModules = [ ];
-    boot.extraModulePackages = [ ];
     boot.loader.grub.enable = true;
     boot.loader.grub.version = 2;
     system.stateVersion = "20.03";
     boot.loader.grub.devices = ["/dev/sda"];
-
-    fileSystems."/" = { device = "/dev/sda"; fsType = "ext4"; };
 
     networking.interfaces.ens3.useDHCP = true;
     services.openssh.enable = true;
