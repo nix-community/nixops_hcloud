@@ -9,12 +9,15 @@ from hcloud.server_types.domain import ServerType
 from hcloud.servers.client import BoundServer
 from hcloud.servers.domain import Server
 from hcloud.ssh_keys.domain import SSHKey
+from nixops import known_hosts
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
 from nixops.nix_expr import RawValue, nix2py
 from nixops.resources import ResourceOptions
 from nixops.util import attr_property, create_key_pair
 from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
                                              get_access_token)
+
+HOST_KEY_TYPE = "ed25519"
 
 
 class HetznerCloudVmOptions(HetznerCloudContextOptions):
@@ -60,6 +63,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     hw_info = attr_property("hetznercloud.hardwareInfo", None, str)
     _ssh_private_key = attr_property("hetznercloud.sshPrivateKey", None, str)
     _ssh_public_key = attr_property("hetznercloud.sshPublicKey", None, str)
+    _public_host_key = attr_property("hetznercloud.publicHostKey", None, str)
 
     @property
     def resource_id(self):
@@ -153,13 +157,14 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self.log_end("")
             self.public_ipv4 = response.server.public_net.ipv4.ip
             self.log_start("waiting for SSH...")
-            self.wait_for_up()
+            self.wait_for_up(callback=lambda: self.log_continue("."))
             self.log_end("")
             with self.depl._db:
                 self.vm_id = response.server.id
                 # TODO get state from creation response
                 self.state = MachineState.STARTING
                 self._detect_hardware()
+                self._update_host_keys()
 
     def destroy(self, wipe=False):
         if self.vm_id is None:
@@ -173,23 +178,30 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         self.log_start("destroying Hetzner Cloud VM...")
         self._client.servers.delete(Server(id=self.vm_id))
         self.log_end("")
+        self._reset()
         return True
 
     def get_ssh_flags(self, *args, **kwargs) -> List[str]:
-        # TODO manage known hosts
         key_file = self.get_ssh_private_key_file()
         assert key_file is not None
-        return super().get_ssh_flags(*args, **kwargs) + [
+        flags = super().get_ssh_flags(*args, **kwargs) + [
             "-i",
             key_file,
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            # TODO these are for testing
-            "-o",
-            "UserKnownHostsFile=/dev/null",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
         ]
+        # TODO set host keys with cloud-init se we don't need to disable host key checking on first
+        # deploy
+        if self._public_host_key is None:
+            flags.extend(
+                [
+                    "-o",
+                    "UserKnownHostsFile=/dev/null",
+                    "-o",
+                    "GlobalKnownHostsFile=/dev/null",
+                    "-o",
+                    "StrictHostKeyChecking=accept-new",
+                ]
+            )
+        return flags
 
     def get_ssh_private_key_file(self) -> Optional[str]:
         if self._ssh_private_key_file:
@@ -235,6 +247,8 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         res.exists = True
         self._cached_server = server
         with self.depl._db:
+            if self._public_host_key is None:
+                self._update_host_keys()
             self.state = self._hcloud_status_to_machine_status(server.status)
             self.image_id = server.image.id
             self.location = server.datacenter.location.name
@@ -255,6 +269,13 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 if not line.lstrip().startswith("#")
             ]
         )
+        self.log_end("")
+
+    def _update_host_keys(self) -> None:
+        self.log_start("updating host keys...")
+        cmd = f"cat /etc/ssh/ssh_host_{HOST_KEY_TYPE}_key.pub"
+        self._public_host_key = str(self.run_command(cmd, capture_stdout=True)).strip()
+        known_hosts.add(self.public_ipv4, self._public_host_key)
         self.log_end("")
 
     @staticmethod
@@ -294,6 +315,8 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
 
     def _reset(self) -> None:
         assert self.depl
+        if all((self.public_ipv4, self._public_host_key)):
+            known_hosts.remove(self.public_ipv4, self._public_host_key)
         with self.depl._db:
             self.state = self.MISSING
             self.vm_id = None
@@ -302,3 +325,6 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self.public_ipv4 = None
             self.server_type = None
             self.hw_info = None
+            self._ssh_public_key = None
+            self._ssh_private_key = None
+            self._public_host_key = None
