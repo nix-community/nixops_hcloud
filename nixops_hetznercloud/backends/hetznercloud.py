@@ -117,10 +117,12 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             if do_upgrade:
                 self.log_start("Changing Hetzner server type...")
                 self._server.shutdown().wait_until_finished()
+                self.wait_for_down(callback=lambda: self.log_continue("."))
                 self._server.change_type(
                     ServerType(name=hetzner.serverType), upgrade_disk=self.upgrade_disk
                 ).wait_until_finished()
-                self._server.power_on().wait_until_finished()
+                self._server.power_on()
+                self.wait_for_up(callback=lambda: self.log_continue("."))
                 self.log_end("")
         self.server_type = hetzner.serverType
 
