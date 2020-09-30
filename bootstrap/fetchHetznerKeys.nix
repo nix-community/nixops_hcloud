@@ -2,6 +2,8 @@
 let script = pkgs.writeShellScript "fetch-hetzner-keys.sh"
   ''
   #!/bin/bash
+  # jq needed by yq
+  export PATH="${pkgs.jq}/bin:$PATH"
   umask 077
   mkdir -p /root/.ssh
   URL="http://169.254.169.254/hetzner/v1"
