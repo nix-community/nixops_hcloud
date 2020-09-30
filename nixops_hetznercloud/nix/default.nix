@@ -5,5 +5,7 @@
   options = [
     ./hetznercloud.nix
   ];
-  resources = { evalResources, zipAttrs, resourcesByType, ... }: { };
+  resources = { evalResources, zipAttrs, resourcesByType, ... }: {
+    hetznercloudSshKeys = evalResources ./hetznercloud_sshkey.nix (zipAttrs resourcesByType.hetznercloudSshKeys or []);
+  };
 }

@@ -1,5 +1,10 @@
 {
   network = {};
+
+  resources.hetznercloudSshKeys.test-key = { lib, ... }: {
+    publicKey = builtins.readFile ./id_rsa.pub;
+  };
+
   machine = { pkgs, ... }:
   {
     imports = [ ../../bootstrap/fetchHetznerKeys.nix ];

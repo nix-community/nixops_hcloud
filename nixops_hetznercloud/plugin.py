@@ -13,6 +13,7 @@ class HetznerCloudPlugin(Plugin):
     def load():
         return [
             "nixops_hetznercloud.backends.hetznercloud",
+            "nixops_hetznercloud.resources",
         ]
 
 

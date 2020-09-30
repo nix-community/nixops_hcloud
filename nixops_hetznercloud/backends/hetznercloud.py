@@ -243,7 +243,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                     res.exists = False
                     return
                 raise
-        self.log_end(f"found")
+        self.log_end("found")
         res.exists = True
         self._cached_server = server
         with self.depl._db:
