@@ -1,6 +1,6 @@
 import os
 import os.path
-from typing import Iterable, List, Optional, Tuple, cast
+from typing import Iterable, List, Optional, Tuple, Union, cast
 
 import hcloud
 import yaml
@@ -12,10 +12,12 @@ from hcloud.ssh_keys.domain import SSHKey
 from nixops import known_hosts
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
 from nixops.nix_expr import RawValue, nix2py
-from nixops.resources import ResourceOptions
+from nixops.resources import ResourceEval, ResourceOptions
 from nixops.util import attr_property, create_key_pair
 from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
                                              get_access_token)
+from nixops_hetznercloud.resources.hetznercloud_sshkey import \
+    HetznerCloudSshKeyState
 
 HOST_KEY_TYPE = "ed25519"
 
@@ -27,6 +29,7 @@ class HetznerCloudVmOptions(HetznerCloudContextOptions):
     location: str
     serverType: str
     upgradeDisk: bool
+    sshKeys: Tuple[Union[str, ResourceEval], ...]
 
 
 class HetznerCloudOptions(MachineOptions):
@@ -61,6 +64,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
     server_type = attr_property("hetznercloud.serverType", None, str)
     upgrade_disk = attr_property("hetznercloud.upgradeDisk", False, bool)
     hw_info = attr_property("hetznercloud.hardwareInfo", None, str)
+    ssh_keys = attr_property("hetznercloud.sshKeys", None, "json")
     _ssh_private_key = attr_property("hetznercloud.sshPrivateKey", None, str)
     _ssh_public_key = attr_property("hetznercloud.sshPublicKey", None, str)
     _public_host_key = attr_property("hetznercloud.publicHostKey", None, str)
@@ -130,6 +134,12 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 self.log_end("")
         self.server_type = hetzner.serverType
 
+        ssh_keys = [
+            k.name if isinstance(k, ResourceEval) else k for k in hetzner.sshKeys
+        ]
+        if self.state != MachineState.MISSING and ssh_keys != self.ssh_keys:
+            self.logger.warn(f"SSH keys cannot be changed after the server is created.")
+
         has_priv = self._ssh_private_key is not None
         has_pub = self._ssh_public_key is not None
         assert has_priv == has_pub
@@ -144,8 +154,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             )
             response = self._client.servers.create(
                 name=self.name,
-                # TODO manage SSH keys correcly
-                ssh_keys=[SSHKey(name="admin")],
+                ssh_keys=[SSHKey(name=k) for k in ssh_keys],
                 server_type=ServerType(self.server_type),
                 image=Image(id=self.image_id),
                 # Set labels so we can find the instance if nixops crashes before writing vm_id
@@ -163,6 +172,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
                 self.vm_id = response.server.id
                 # TODO get state from creation response
                 self.state = MachineState.STARTING
+                self.ssh_keys = ssh_keys
                 self._detect_hardware()
                 self._update_host_keys()
 
@@ -257,6 +267,9 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
         res.is_up = self.state == MachineState.UP
         if res.is_up:
             super()._check(res)
+
+    def create_after(self, resources, defn):
+        return {r for r in resources if isinstance(r, HetznerCloudSshKeyState)}
 
     def _detect_hardware(self) -> None:
         self.log_start("detecting hardware...")

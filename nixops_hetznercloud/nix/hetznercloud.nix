@@ -1,6 +1,7 @@
 # Configuration specific to the Hetzner Cloud backend.
 { config, pkgs, lib, ... }:
 with lib;
+with import ./lib.nix lib;
 {
   ###### interface
 
@@ -48,6 +49,14 @@ with lib;
       description = ''
         Whether to upgrade the disk when upgrading the server type.
         If true the server can't be downscaled back.
+      '';
+    };
+
+    sshKeys = mkOption {
+      type = types.listOf (types.either types.string (resource "hetznercloud-sshkey"));
+      default = [];
+      description = ''
+        List of SSH keys with root access to the machine. These will be managed with the fetch-hetzner-keys service, not by NixOS.
       '';
     };
   };
