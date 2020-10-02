@@ -1,2 +1,2 @@
 # pylint: disable=unused-variable
-from . import hcloud_sshkey
+from . import hcloud_sshkey, hcloud_volume

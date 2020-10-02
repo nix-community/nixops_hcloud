@@ -5,6 +5,11 @@
     publicKey = builtins.readFile ./id_rsa.pub;
   };
 
+  resources.hcloudVolumes.test-vol = {
+    size = 10;
+    location = "hel1";
+  };
+
   machine = { pkgs, resources, ... }:
   {
     imports = [ ../../bootstrap/fetchHetznerKeys.nix ];

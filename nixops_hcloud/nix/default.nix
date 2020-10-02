@@ -7,5 +7,6 @@
   ];
   resources = { evalResources, zipAttrs, resourcesByType, ... }: {
     hcloudSshKeys = evalResources ./hcloud_sshkey.nix (zipAttrs resourcesByType.hcloudSshKeys or []);
+    hcloudVolumes = evalResources ./hcloud_volume.nix (zipAttrs resourcesByType.hcloudVolumes or []);
   };
 }

@@ -49,6 +49,12 @@ class EntityResource(Protocol, Generic[ResourceDefinitionType_contra, BoundModel
     ) -> None:
         raise NotImplementedError()
 
+    def should_update(self, defn: ResourceDefinitionType_contra) -> bool:
+        raise NotImplementedError()
+
+    def update_unchecked(self, defn: ResourceDefinitionType_contra) -> None:
+        raise NotImplementedError()
+
     def check_model(self, model: BoundModelType) -> None:
         raise NotImplementedError()
 
@@ -72,6 +78,8 @@ def entity_create(
             res.hcloud_id = model.id
             res.state = ResourceState.UP
             res.update(defn, model)  # type: ignore
+    elif res.should_update(defn):
+        res.update_unchecked(defn)
 
 
 def entity_destroy(

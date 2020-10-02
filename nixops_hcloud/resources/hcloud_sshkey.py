@@ -78,9 +78,14 @@ class HcloudSshKeyState(
         return resp
 
     def update(self, defn: HcloudSshKeyDefinition, model: BoundSSHKey) -> None:
+        self.check_model(model)
+
+    def should_update(self, defn: HcloudSshKeyDefinition) -> bool:
+        return self.public_key != defn.config.publicKey
+
+    def update_unchecked(self, defn: HcloudSshKeyDefinition) -> None:
         if self.public_key != defn.config.publicKey:
             self.logger.error("Cannot update the public key of a Hetzner Cloud SSH key")
 
     def check_model(self, model: BoundSSHKey) -> None:
-        if self.public_key != model.public_key:
-            self.logger.error("Cannot update the public key of a Hetzner Cloud SSH key")
+        self.public_key = model.public_key
