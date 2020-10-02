@@ -1,7 +1,7 @@
 {
   network = {};
 
-  resources.hetznercloudSshKeys.test-key = {
+  resources.hcloudSshKeys.test-key = {
     publicKey = builtins.readFile ./id_rsa.pub;
   };
 
@@ -10,11 +10,11 @@
     imports = [ ../../bootstrap/fetchHetznerKeys.nix ];
 
     config = {
-      deployment.targetEnv = "hetznercloud";
-      deployment.hetznercloud = {
+      deployment.targetEnv = "hcloud";
+      deployment.hcloud = {
         serverType = "cx11";
         location = "hel1";
-        sshKeys = [ resources.hetznercloudSshKeys.test-key ];
+        sshKeys = [ resources.hcloudSshKeys.test-key ];
       };
 
       services.fetchHetznerKeys.enable = true;

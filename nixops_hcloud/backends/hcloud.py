@@ -2,27 +2,26 @@ import os
 import os.path
 from typing import Iterable, List, Optional, Tuple, Union, cast
 
-import hcloud
 import yaml
-from hcloud.images.domain import Image
-from hcloud.server_types.domain import ServerType
-from hcloud.servers.client import BoundServer
-from hcloud.servers.domain import Server
-from hcloud.ssh_keys.domain import SSHKey
 from nixops import known_hosts
 from nixops.backends import MachineDefinition, MachineOptions, MachineState
 from nixops.nix_expr import RawValue, nix2py
 from nixops.resources import ResourceEval, ResourceOptions
 from nixops.util import attr_property, create_key_pair
-from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
-                                             get_access_token)
-from nixops_hetznercloud.resources.hetznercloud_sshkey import \
-    HetznerCloudSshKeyState
+from nixops_hcloud.hcloud_util import HcloudContextOptions, get_access_token
+from nixops_hcloud.resources.hcloud_sshkey import HcloudSshKeyState
+
+import hcloud
+from hcloud.images.domain import Image
+from hcloud.server_types.domain import ServerType
+from hcloud.servers.client import BoundServer
+from hcloud.servers.domain import Server
+from hcloud.ssh_keys.domain import SSHKey
 
 HOST_KEY_TYPE = "ed25519"
 
 
-class HetznerCloudVmOptions(HetznerCloudContextOptions):
+class HcloudVmOptions(HcloudContextOptions):
     image: Optional[int]
     # TODO validate image_selector
     image_selector: str
@@ -32,20 +31,20 @@ class HetznerCloudVmOptions(HetznerCloudContextOptions):
     sshKeys: Tuple[Union[str, ResourceEval], ...]
 
 
-class HetznerCloudOptions(MachineOptions):
-    hetznercloud: HetznerCloudVmOptions
+class HcloudOptions(MachineOptions):
+    hcloud: HcloudVmOptions
 
 
-class HetznerCloudDefinition(MachineDefinition):
-    config: HetznerCloudOptions
+class HcloudDefinition(MachineDefinition):
+    config: HcloudOptions
 
     @classmethod
     def get_type(cls) -> str:
-        return "hetznercloud"
+        return "hcloud"
 
 
-class HetznerCloudState(MachineState[HetznerCloudDefinition]):
-    definition_type = HetznerCloudDefinition
+class HcloudState(MachineState[HcloudDefinition]):
+    definition_type = HcloudDefinition
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -54,20 +53,20 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
 
     @classmethod
     def get_type(cls) -> str:
-        return "hetznercloud"
+        return "hcloud"
 
     state = attr_property("state", MachineState.MISSING, int)  # override
     public_ipv4 = attr_property("publicIpv4", None, str)
-    token = attr_property("hetznercloud.token", None, str)
-    image_id = attr_property("hetznercloud.image", None, int)
-    location = attr_property("hetznercloud.location", None, str)
-    server_type = attr_property("hetznercloud.serverType", None, str)
-    upgrade_disk = attr_property("hetznercloud.upgradeDisk", False, bool)
-    hw_info = attr_property("hetznercloud.hardwareInfo", None, str)
-    ssh_keys = attr_property("hetznercloud.sshKeys", None, "json")
-    _ssh_private_key = attr_property("hetznercloud.sshPrivateKey", None, str)
-    _ssh_public_key = attr_property("hetznercloud.sshPublicKey", None, str)
-    _public_host_key = attr_property("hetznercloud.publicHostKey", None, str)
+    token = attr_property("hcloud.token", None, str)
+    image_id = attr_property("hcloud.image", None, int)
+    location = attr_property("hcloud.location", None, str)
+    server_type = attr_property("hcloud.serverType", None, str)
+    upgrade_disk = attr_property("hcloud.upgradeDisk", False, bool)
+    hw_info = attr_property("hcloud.hardwareInfo", None, str)
+    ssh_keys = attr_property("hcloud.sshKeys", None, "json")
+    _ssh_private_key = attr_property("hcloud.sshPrivateKey", None, str)
+    _ssh_public_key = attr_property("hcloud.sshPublicKey", None, str)
+    _public_host_key = attr_property("hcloud.publicHostKey", None, str)
 
     @property
     def resource_id(self):
@@ -88,9 +87,9 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             self._cached_server = self._client.servers.get_by_id(self.vm_id)
         return cast(BoundServer, self._cached_server)
 
-    def create(self, defn: HetznerCloudDefinition, check, allow_reboot, allow_recreate):
-        assert isinstance(defn, HetznerCloudDefinition)
-        hetzner = defn.config.hetznercloud
+    def create(self, defn: HcloudDefinition, check, allow_reboot, allow_recreate):
+        assert isinstance(defn, HcloudDefinition)
+        hetzner = defn.config.hcloud
         self.token = get_access_token(hetzner)
         if self.state not in (MachineState.RESCUE, MachineState.UP) or check:
             self.check()
@@ -269,7 +268,7 @@ class HetznerCloudState(MachineState[HetznerCloudDefinition]):
             super()._check(res)
 
     def create_after(self, resources, defn):
-        return {r for r in resources if isinstance(r, HetznerCloudSshKeyState)}
+        return {r for r in resources if isinstance(r, HcloudSshKeyState)}
 
     def _detect_hardware(self) -> None:
         self.log_start("detecting hardware...")

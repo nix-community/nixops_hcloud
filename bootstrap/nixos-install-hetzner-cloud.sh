@@ -7,7 +7,7 @@
 #
 # Run like:
 #
-#     curl -L https://raw.githubusercontent.com/RoGryza/nixops_hetznercloud/master/bootstrap/nixos-install-hetzner-cloud.sh | sudo bash
+#     curl -L https://raw.githubusercontent.com/RoGryza/nixops_hcloud/master/bootstrap/nixos-install-hetzner-cloud.sh | sudo bash
 #
 # To run it from the Hetzner Cloud web terminal without typing it down,
 # use `xdotoool` (you have e.g. 3 seconds to focus the window):
@@ -23,7 +23,7 @@ mkfs.ext4 /dev/sda1
 mount /dev/sda1 /mnt
 
 nixos-generate-config --root /mnt
-REPO="https://raw.githubusercontent.com/RoGryza/nixops_hetznercloud/master"
+REPO="https://raw.githubusercontent.com/RoGryza/nixops_hcloud/master"
 curl -L "$REPO/bootstrap/configuration.nix" > /mnt/etc/nixos/configuration.nix
 curl -L "$REPO/bootstrap/fetchHetznerKeys.nix" > /mnt/etc/nixos/fetchHetznerKeys.nix
 

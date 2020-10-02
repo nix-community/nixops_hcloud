@@ -5,7 +5,7 @@ with import ./lib.nix lib;
 {
   ###### interface
 
-  options.deployment.hetznercloud = {
+  options.deployment.hcloud = {
     inherit (import ./context.nix { inherit lib; }) token context;
 
     image = mkOption {
@@ -13,7 +13,7 @@ with import ./lib.nix lib;
       default = null;
       description = ''
         Image ID to use for this VM. It's expected to be a NixOs system with fetchHetznerKeys enabled.
-        Takes precedence over <option>deployment.hetznercloud.image_selector</option>.
+        Takes precedence over <option>deployment.hcloud.image_selector</option>.
       '';
     };
 
@@ -53,7 +53,7 @@ with import ./lib.nix lib;
     };
 
     sshKeys = mkOption {
-      type = types.listOf (types.either types.string (resource "hetznercloud-sshkey"));
+      type = types.listOf (types.either types.string (resource "hcloud-sshkey"));
       default = [];
       description = ''
         List of SSH keys with root access to the machine. These will be managed with the fetch-hetzner-keys service, not by NixOS.
@@ -63,7 +63,7 @@ with import ./lib.nix lib;
 
   ###### implementation
 
-  config = mkIf (config.deployment.targetEnv == "hetznercloud") {
+  config = mkIf (config.deployment.targetEnv == "hcloud") {
     nixpkgs.system = mkOverride 900 "x86_64-linux";
 
     boot.loader.grub.enable = true;

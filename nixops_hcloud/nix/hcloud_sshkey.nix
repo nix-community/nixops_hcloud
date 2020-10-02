@@ -16,5 +16,5 @@ with lib;
     };
   };
 
-  config._type = "hetznercloud-sshkey";
+  config._type = "hcloud-sshkey";
 }

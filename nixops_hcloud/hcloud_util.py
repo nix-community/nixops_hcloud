@@ -11,7 +11,7 @@ class AccessTokenException(Exception):
     pass
 
 
-class HetznerCloudContextOptions(ResourceOptions):
+class HcloudContextOptions(ResourceOptions):
     """Common authentication settings for Hetzner Cloud resources. Subclass this for resources
        which need Hetzner API access.
     """
@@ -40,7 +40,7 @@ class HcloudConfig:
 
 
 def get_access_token(
-    opt: HetznerCloudContextOptions,
+    opt: HcloudContextOptions,
     env: Optional[Mapping[str, str]] = None,
     cfg: HcloudConfig = None,
 ) -> str:

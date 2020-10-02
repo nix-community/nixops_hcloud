@@ -6,8 +6,7 @@ from hcloud.core.client import BoundModelBase, ClientEntityBase
 from nixops.deployment import Deployment
 from nixops.resources import ResourceDefinition, ResourceState
 
-from nixops_hetznercloud.hcloud_util import (HetznerCloudContextOptions,
-                                             get_access_token)
+from nixops_hcloud.hcloud_util import HcloudContextOptions, get_access_token
 
 BoundModelType = TypeVar("BoundModelType", bound=BoundModelBase)
 ResourceDefinitionType_contra = TypeVar(
@@ -16,7 +15,7 @@ ResourceDefinitionType_contra = TypeVar(
 
 
 class HcloudDefinition(Protocol):
-    config: HetznerCloudContextOptions
+    config: HcloudContextOptions
 
 
 # Resources must be direct subclasses of ResourceState, so instead of having a class in the middle

@@ -23,7 +23,7 @@ with lib;
 
         If left empty, the value of the environment variable <envar>HCLOUD_CONTEXT</envar> is used
         if present, else the current active context is used.
-        Takes precedence over <option>deployment.hetznercloud.token</option> if explicitly set.
+        Takes precedence over <option>deployment.hcloud.token</option> if explicitly set.
       '';
     };
 }
