@@ -86,7 +86,9 @@ class HcloudVolumeState(
     def update(self, defn: HcloudVolumeDefinition, model: BoundVolume) -> None:
         if defn.config.location != model.location.name:
             self.logger.error("Cannot update the location of a Hetzner Cloud volume")
-        if defn.config.size != model.size:
+        if defn.config.size < model.size:
+            self.logger.error("Cannot shrink volume")
+        elif defn.config.size > model.size:
             if not self.depl.logger.confirm(f"Resize volume {self.name!r}?"):
                 return
             model.resize(defn.config.size).wait_until_finished()
@@ -98,7 +100,9 @@ class HcloudVolumeState(
     def update_unchecked(self, defn: HcloudVolumeDefinition) -> None:
         if defn.config.location != self.location:
             self.logger.error("Cannot update the location of a Hetzner Cloud volume")
-        if defn.config.size != self.size:
+        if defn.config.size < self.size:
+            self.logger.error("Cannot shrink volume")
+        elif defn.config.size > self.size:
             if not self.depl.logger.confirm(f"Resize volume {self.name!r}?"):
                 return
             model = get_by_name(self)
