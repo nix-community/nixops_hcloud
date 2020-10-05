@@ -1,6 +1,7 @@
 import os
 import os.path
-from typing import Iterable, List, Optional, Tuple, Union, cast
+from typing import (Any, Iterable, List, Mapping, Optional, Sequence, Tuple,
+                    Union, cast)
 
 import yaml
 from nixops import known_hosts
@@ -10,15 +11,24 @@ from nixops.resources import ResourceEval, ResourceOptions
 from nixops.util import attr_property, create_key_pair
 from nixops_hcloud.hcloud_util import HcloudContextOptions, get_access_token
 from nixops_hcloud.resources.hcloud_sshkey import HcloudSshKeyState
+from nixops_hcloud.resources.hcloud_volume import HcloudVolumeState
 
 import hcloud
+from hcloud.actions.client import BoundAction
 from hcloud.images.domain import Image
 from hcloud.server_types.domain import ServerType
 from hcloud.servers.client import BoundServer
 from hcloud.servers.domain import Server
 from hcloud.ssh_keys.domain import SSHKey
+from hcloud.volumes.domain import Volume
 
 HOST_KEY_TYPE = "ed25519"
+
+
+class VolumeOptions(ResourceOptions):
+    volume: Union[str, ResourceEval]
+    mountPoint: Optional[str]
+    fileSystem: Mapping[str, Any]
 
 
 class HcloudVmOptions(HcloudContextOptions):
@@ -28,7 +38,8 @@ class HcloudVmOptions(HcloudContextOptions):
     location: str
     serverType: str
     upgradeDisk: bool
-    sshKeys: Tuple[Union[str, ResourceEval], ...]
+    sshKeys: Sequence[Union[str, ResourceEval]]
+    volumes: Sequence[VolumeOptions]
 
 
 class HcloudOptions(MachineOptions):
@@ -46,15 +57,6 @@ class HcloudDefinition(MachineDefinition):
 class HcloudState(MachineState[HcloudDefinition]):
     definition_type = HcloudDefinition
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._cached_client: Optional[hcloud.Client] = None
-        self._cached_server: Optional[BoundServer] = None
-
-    @classmethod
-    def get_type(cls) -> str:
-        return "hcloud"
-
     state = attr_property("state", MachineState.MISSING, int)  # override
     public_ipv4 = attr_property("publicIpv4", None, str)
     token = attr_property("hcloud.token", None, str)
@@ -64,9 +66,20 @@ class HcloudState(MachineState[HcloudDefinition]):
     upgrade_disk = attr_property("hcloud.upgradeDisk", False, bool)
     hw_info = attr_property("hcloud.hardwareInfo", None, str)
     ssh_keys = attr_property("hcloud.sshKeys", None, "json")
+    volume_ids = attr_property("hcloud.volumeIds", None, "json")
+    filesystems = attr_property("hcloud.filesystems", None, "json")
     _ssh_private_key = attr_property("hcloud.sshPrivateKey", None, str)
     _ssh_public_key = attr_property("hcloud.sshPublicKey", None, str)
     _public_host_key = attr_property("hcloud.publicHostKey", None, str)
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._cached_client: Optional[hcloud.Client] = None
+        self._cached_server: Optional[BoundServer] = None
+
+    @classmethod
+    def get_type(cls) -> str:
+        return "hcloud"
 
     @property
     def resource_id(self):
@@ -139,13 +152,56 @@ class HcloudState(MachineState[HcloudDefinition]):
         if self.state != MachineState.MISSING and ssh_keys != self.ssh_keys:
             self.logger.warn(f"SSH keys cannot be changed after the server is created.")
 
+        volume_ids = []
+        filesystems = {}
+        for volumeopts in hetzner.volumes:
+            volume = volumeopts.volume
+            if isinstance(volume, str):
+                volume_model = self._client.volumes.get_by_name(volume)
+                volume_name = volume
+                volume_id = volume_model.id
+                volume_loc = volume_model.location.name
+            else:
+                volume_res = self.depl.get_typed_resource(
+                    volume._name, "hcloud-volume", HcloudVolumeState
+                )
+                volume_name = volume_res.name
+                volume_id = volume_res.hcloud_id
+                assert volume_id is not None
+                volume_loc = volume_res.location
+            if volume_loc != self.location:
+                raise Exception(
+                    f"Volume {volume_name!r} is in a different location from server {self.name!r}"
+                )
+            volume_ids.append(volume_id)
+            if volumeopts.mountPoint is not None:
+                fs = dict(volumeopts.fileSystem)
+                fs["device"] = f"/dev/disk/by-id/scsi-0HC_Volume_{volume_id}"
+                filesystems[volumeopts.mountPoint] = fs
+
         has_priv = self._ssh_private_key is not None
         has_pub = self._ssh_public_key is not None
         assert has_priv == has_pub
         if not has_priv:
             self.log("Generating SSH keypair...")
             (self._ssh_private_key, self._ssh_public_key) = create_key_pair()
-        if not self.vm_id:
+        if self.vm_id:
+            if self.volume_ids != volume_ids:
+                current = set(self.volume_ids)
+                new = set(volume_ids)
+                volumes_client = self._client.volumes
+                self.log_start("Updating volumes...")
+                for v in current - new:
+                    volumes_client.detach(Volume(id=v))
+                    self.log_continue(".")
+                for v in new - current:
+                    volumes_client.attach(
+                        Volume(id=v), self._server, automount=False
+                    ).wait_until_finished()
+                    self.log_continue(".")
+                self.log_end("")
+                self.volume_ids = volume_ids
+        else:
             self.log_start(
                 "Creating Hetzner Cloud VM ("
                 + f"image '{image_id}', type '{hetzner.serverType}', location '{hetzner.location}'"
@@ -154,6 +210,7 @@ class HcloudState(MachineState[HcloudDefinition]):
             response = self._client.servers.create(
                 name=self.name,
                 ssh_keys=[SSHKey(name=k) for k in ssh_keys],
+                volumes=[Volume(id=v) for v in volume_ids],
                 server_type=ServerType(self.server_type),
                 image=Image(id=self.image_id),
                 # Set labels so we can find the instance if nixops crashes before writing vm_id
@@ -172,8 +229,10 @@ class HcloudState(MachineState[HcloudDefinition]):
                 # TODO get state from creation response
                 self.state = MachineState.STARTING
                 self.ssh_keys = ssh_keys
+                self.volume_ids = volume_ids
                 self._detect_hardware()
                 self._update_host_keys()
+        self.filesystems = filesystems
 
     def destroy(self, wipe=False):
         if self.vm_id is None:
@@ -227,6 +286,9 @@ class HcloudState(MachineState[HcloudDefinition]):
         spec = super().get_physical_spec()
         if self.hw_info:
             spec.setdefault("imports", []).append(nix2py(self.hw_info))
+        if self.filesystems is not None:
+            fs = spec.setdefault("config", {}).setdefault("fileSystems", {})
+            fs.update(self.filesystems)
         return spec
 
     def _check(self, res):
@@ -260,6 +322,7 @@ class HcloudState(MachineState[HcloudDefinition]):
                 self._update_host_keys()
             self.state = self._hcloud_status_to_machine_status(server.status)
             self.image_id = server.image.id
+            self.volume_ids = [v.id for v in server.volumes]
             self.location = server.datacenter.location.name
             self.public_ipv4 = server.public_net.ipv4.ip
             self.server_type = server.server_type.name
@@ -268,7 +331,11 @@ class HcloudState(MachineState[HcloudDefinition]):
             super()._check(res)
 
     def create_after(self, resources, defn):
-        return {r for r in resources if isinstance(r, HcloudSshKeyState)}
+        return {
+            r
+            for r in resources
+            if isinstance(r, (HcloudSshKeyState, HcloudVolumeState))
+        }
 
     def _detect_hardware(self) -> None:
         self.log_start("detecting hardware...")

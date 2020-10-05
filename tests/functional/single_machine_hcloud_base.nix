@@ -20,6 +20,16 @@
         serverType = "cx11";
         location = "hel1";
         sshKeys = [ resources.hcloudSshKeys.test-key ];
+        volumes = [
+          {
+            volume = resources.hcloudVolumes.test-vol;
+            mountPoint = "/mnt/vol";
+            fileSystem = {
+              fsType = "ext4";
+              autoFormat = true;
+            };
+          }
+        ];
       };
 
       services.fetchHetznerKeys.enable = true;

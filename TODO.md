@@ -1,8 +1,5 @@
+* Automated tests
 * Typecheck hcloud
 * Wrap BoundActions with logging callbacks
-* Move common resource code to hcloud_util or another common module
+* Maybe use nixos-infect instead of needing a bootstraped snapshot
 * Replace fetchHetznerKeys with cloud-init
-* Implement server actions:
-  + Reboot
-  + Rescue
-  + Backups

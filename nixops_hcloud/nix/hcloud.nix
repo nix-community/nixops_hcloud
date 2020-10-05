@@ -59,6 +59,41 @@ with import ./lib.nix lib;
         List of SSH keys with root access to the machine. These will be managed with the fetch-hetzner-keys service, not by NixOS.
       '';
     };
+
+    volumes =
+      let volumeType = types.submodule {
+        options = {
+          volume = mkOption {
+            type = types.either types.string (resource "hcloud-volume");
+            description = ''
+              Volume name or instance.
+            '';
+          };
+
+          mountPoint = mkOption {
+            type = types.nullOr types.string;
+            default = null;
+            description = ''
+              Mount point for this volume. Won't be automounted when <literal>null</literal>.
+            '';
+          };
+
+          fileSystem = mkOption {
+            type = types.attrs;
+            default = {};
+            description = ''
+              Options to be forwarded to <option>fileSystems.mountPoint</option>.
+            '';
+          };
+        };
+      };
+      in mkOption {
+        type = types.listOf volumeType;
+        default = [];
+        description = ''
+          List of volumes attached to the machine.
+        '';
+      };
   };
 
   ###### implementation
