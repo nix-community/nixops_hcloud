@@ -1,3 +1,5 @@
+This is not actively maintained. See [nixops-hetznercloud](https://github.com/lukebfox/nixops-hetznercloud) for an alternative.
+
 # NixOps Hetzner Cloud Plugin
 
 [NixOps](https://github.com/NixOS/nixops) plugin for Hetzner Cloud integraiton.
